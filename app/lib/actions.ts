@@ -6,25 +6,43 @@ import { redirect } from "next/navigation";
 
 const FormSchema = z.object({
   id: z.string(),
-  customerId: z.string(),
-  amount: z.coerce.number(),
-  status: z.enum(["pending", "paid"]),
+  customerId: z.string({ invalid_type_error: "Please select a customer." }),
+  amount: z.coerce.number().gt(0, { message: "Please entar an amount greater than 0." }),
+  status: z.enum(["pending", "paid"], { invalid_type_error: "Please select an invoice status." }),
   date: z.string(),
 });
 
 const CreateInvoice = FormSchema.omit({ id: true, date: true });
 const UpdateInvoice = FormSchema.omit({ id: true, date: true });
 
-export async function createInvoice(formData: FormData) {
+export type State = {
+  errors?: {
+    customerId?: string[];
+    amount?: string[];
+    status?: string[];
+  };
+  message?: string | null;
+}
+
+export async function createInvoice(prevState: State, formData: FormData) {
   console.log("triggered createInvoice");
 
   // pass your rawFormData to CreateInvoice to validate the types:
-  const { customerId, amount, status } = CreateInvoice.parse({
+  const validateFields = CreateInvoice.safeParse({
     customerId: formData.get("customerId"),
     amount: formData.get("amount"),
     status: formData.get("status"),
   });
 
+  // If form validation fails, return errors early. Otherwise, continue.
+  if (!validateFields.success) {
+    return {
+      errors: validateFields.error.flatten().fieldErrors,
+      message: "Missing Fields. Failed to Create Invoice.",
+    };
+  }
+
+  const { customerId, amount, status } = validateFields.data
   // It's usually good practice to store monetary values in cents in your database
   // to eliminate JavaScript floating-point errors and ensure greater accuracy.
   const amountInCents = amount * 100;
@@ -38,6 +56,7 @@ export async function createInvoice(formData: FormData) {
       VALUES (${customerId}, ${amountInCents}, ${status}, ${date})
     `;
   } catch (error) {
+    console.error("Database Error:", error);
     return {
       message: "Database Error: Failed to Create Invoice.",
     };
@@ -48,14 +67,23 @@ export async function createInvoice(formData: FormData) {
   redirect("/dashboard/invoices");
 }
 
-export async function updateInvoice(id: string, formData: FormData) {
+export async function updateInvoice(id: string, prevState: State, formData: FormData) {
+  
   // validate data types
-  const { customerId, amount, status } = UpdateInvoice.parse({
+  const validateFields = UpdateInvoice.safeParse({
     customerId: formData.get("customerId"),
     amount: formData.get("amount"),
     status: formData.get("status"),
   });
 
+  if (!validateFields.success) {
+    return {
+      errors: validateFields.error.flatten().fieldErrors,
+      message: "Missing Fields. Failed to Update Invoice.",
+    };
+  }
+
+  const { customerId, amount, status } = validateFields.data;
   const amountInCents = amount * 100;
 
   try {
@@ -65,6 +93,7 @@ export async function updateInvoice(id: string, formData: FormData) {
       WHERE id = ${id}
       `;
   } catch (error) {
+    console.error("Database Error:", error);
     return {
       message: "Database Error: Failed to Update Invoice.",
     };
@@ -82,6 +111,8 @@ export async function deleteInvoice(id: string) {
     revalidatePath('/dashboard/invoices');
     return { message: 'Deleted Invoice.' };
   } catch (error) {
+    console.error('Database Error:', error);
     return { message: 'Database Error: Failed to Delete Invoice.' };
   }
 }
+
